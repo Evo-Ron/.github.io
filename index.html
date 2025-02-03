@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Interactive 7th Grade Math Game</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f0f8ff;
+      color: #333;
+      margin: 20px;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    h1, h2 {
+      color: #004080;
+    }
+    .problem-statement {
+      margin-bottom: 15px;
+      font-size: 1.2em;
+      white-space: pre-line;
+    }
+    /* Equation row container with even spacing */
+    #equationRow {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+    .input-block > div:first-child {
+  font-size: 1.2em;
+}
+    .input-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .input-block input {
+      padding: 6px;
+      font-size: 1em;
+      width: 100px;
+      text-align: center;
+    }
+    .variable-hint {
+      font-size: 0.85em;
+      color: #555;
+      margin-top: 3px;
+    }
+    .button-container {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .quit-container {
+      margin-top: 20px;
+      text-align: right;
+    }
+    button {
+      padding: 10px 15px;
+      font-size: 1em;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      background-color: #004080;
+      color: #fff;
+    }
+    button:disabled {
+      background-color: #999;
+      cursor: not-allowed;
+    }
+    .feedback {
+      margin-top: 15px;
+      font-weight: bold;
+    }
+    #scoreBoard {
+      margin-top: 20px;
+      font-size: 1.1em;
+      color: #004080;
+    }
+    .hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Welcome to Mr. Rondini's percentage trainer!</h1>
+    <p>
+      For each problem, enter the given values into the correct text boxes and leave the unknown amount blank.
+      Then click "Calculate." If you set up the problem correctly, you'll get a point.
+      Reach a score of 20 to finish the game.
+    </p>
+
+    <!-- Problem Statement and Equation Row -->
+    <div id="problemContainer">
+      <div id="problemStatement" class="problem-statement"></div>
+      <div id="equationRow"></div>
+    </div>
+
+    <!-- Buttons: Calculate/Next Problem in one container, Quit Game in a separate container -->
+    <div class="button-container">
+      <button id="calculateBtn">Calculate</button>
+      <button id="nextBtn" class="hidden">Next Problem</button>
+    </div>
+    <div class="quit-container">
+      <button id="quitBtn">Quit Game</button>
+    </div>
+
+    <div id="feedback" class="feedback"></div>
+    <div id="scoreBoard"></div>
+  </div>
+
+  <script>
+    // Tolerance for numerical comparisons
+    const TOLERANCE = 0.01;
+    // Game ends when score reaches this limit.
+    const SCORE_LIMIT = 20;
+    
+    let score = 0;
+    let totalQuestions = 0;
+    let currentProblem = null;
+
+    // Mappings for variable descriptions.
+    // For non-simple interest problems, messages are now as specified.
+    const nonSimpleMapping = {
+      basic: {
+        a: "part",
+        p: "percentage (as a decimal)",
+        w: "whole"
+      },
+      // The markup and discount mappings below will not be used directly.
+      // Their hints will be generated dynamically.
+      markup: {
+        a: "selling price",
+        p: "markup percentage (as a decimal)",
+        w: "original price"
+      },
+      discount: {
+        a: "selling price",
+        p: "discount percentage (as a decimal)",
+        w: "original price"
+      },
+      error: {
+        a: "amount of error",
+        p: "percentage (as a decimal)",
+        w: "actual amount"
+      }
+    };
+
+    // Mapping for simple interest problems.
+    const simpleMapping = {
+      I: "Simple Interest",
+      P: "Principal",
+      r: "interest rate (as a decimal)",
+      t: "time in years"
+    };
+
+    // Helper mapping generator for percent change problems.
+    function getPercentChangeMapping(problem) {
+      let mapping = {};
+      if (problem.direction === "increase") {
+        if (problem.subtype === "basic") {
+          mapping = {
+            a: "amount of increase",
+            p: "percent of increase (as a decimal)",
+            w: "original amount"
+          };
+        } else { // cost
+          mapping = {
+            a: "markup amount",
+            p: "markup percentage (as a decimal)",
+            w: "original price"
+          };
+        }
+      } else { // decrease
+        if (problem.subtype === "basic") {
+          mapping = {
+            a: "amount of decrease",
+            p: "percent of decrease (as a decimal)",
+            w: "original amount"
+          };
+        } else { // cost
+          mapping = {
+            a: "discount amount",
+            p: "discount percentage (as a decimal)",
+            w: "original price"
+          };
+        }
+      }
+      return mapping;
+    }
+
+    // Utility functions
+    function getRandomInt(min, max) {
+      return Math.floor(Math.random() * (max - min + 1)) + min;
+    }
+
+    function randomChoice(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+
+    // ========== Problem Generators ==========
+
+    // Generates a non-simple interest problem.
+    // Updated types: markup, discount, percentChange, error, basic.
+    function generateNonSimpleProblem() {
+      const types = ['markup', 'discount', 'percentChange', 'error', 'basic'];
+      const chosenType = randomChoice(types);
+      let a, p, w;
+      let statement = '';
+      let unknown = null;
+
+      // Helper function to randomly select which variable will be unknown.
+      // (Not used for markup/discount since unknown is fixed to 'a'.)
+      function chooseUnknown(allowedVars) {
+        return randomChoice(allowedVars);
+      }
+
+      if (chosenType === 'markup') {
+        // For markup problems, the unknown is always 'a' (the new selling price).
+        unknown = 'a';
+        const markupPercent = getRandomInt(10, 50);
+        w = getRandomInt(10, 100);
+        // p is computed as 1 + (markupPercent/100)
+        p = +(1 + (markupPercent / 100)).toFixed(3);
+        a = +(w * p).toFixed(2);
+        statement = `An item that originally cost $${w} gets marked up by ${markupPercent}%.\nWhat is the selling price of the item?`;
+        return { type: 'markup', statement, variables: { a, p, w }, unknown };
+      } else if (chosenType === 'discount') {
+        // For discount problems, the unknown is always 'a' (the new selling price).
+        unknown = 'a';
+        const discountPercent = getRandomInt(10, 50);
+        w = getRandomInt(20, 200);
+        // p is computed as 1 - (discountPercent/100)
+        p = +(1 - (discountPercent / 100)).toFixed(3);
+        a = +(w * p).toFixed(2);
+        statement = `An item that originally cost $${w} gets discounted ${discountPercent}%.\nWhat is the selling price of the item?`;
+        return { type: 'discount', statement, variables: { a, p, w }, unknown };
+      } else if (chosenType === 'percentChange') {
+        // New percent of change problems.
+        const direction = randomChoice(['increase', 'decrease']);
+        const subtype = randomChoice(['basic', 'cost']);
+        unknown = chooseUnknown(['a', 'p', 'w']);
+        w = getRandomInt(50, 150);
+        p = +(getRandomInt(5, 50) / 100).toFixed(3);
+        a = +(w * p).toFixed(2);
+        const newAmount = direction === 'increase' ? +(w + a).toFixed(2) : +(w - a).toFixed(2);
+
+        if (unknown === 'a') {
+          if (direction === 'increase') {
+            if (subtype === 'basic') {
+              statement = `An original amount is ${w}, and it increases by ${ (p*100).toFixed(0) }%.\nSolve for the amount of increase.`;
+            } else {
+              statement = `An item originally costs ${w}, and it is marked up by ${ (p*100).toFixed(0) }%.\nSolve for the amount of markup.`;
+            }
+          } else {
+            if (subtype === 'basic') {
+              statement = `An original amount is ${w}, and it decreases by ${ (p*100).toFixed(0) }%.\nSolve for the amount of decrease.`;
+            } else {
+              statement = `An item originally costs ${w}, and it is discounted by ${ (p*100).toFixed(0) }%.\nSolve for the amount of discount.`;
+            }
+          }
+        } else if (unknown === 'p') {
+          if (direction === 'increase') {
+            if (subtype === 'basic') {
+              statement = `An original amount is ${w}, and it changes to ${newAmount}.\nSolve for the percent of increase (as a decimal).`;
+            } else {
+              statement = `An item originally costs ${w}, but its selling price is ${newAmount}.\nSolve for the markup percentage (as a decimal).`;
+            }
+          } else {
+            if (subtype === 'basic') {
+              statement = `An original amount is ${w}, and it changes to ${newAmount}.\nSolve for the percent of decrease (as a decimal).`;
+            } else {
+              statement = `An item originally costs ${w}, but its sale price is ${newAmount}.\nSolve for the discount percentage (as a decimal).`;
+            }
+          }
+        } else {
+          if (direction === 'increase') {
+            if (subtype === 'basic') {
+              statement = `A number increased by ${a}, which is ${ (p*100).toFixed(0) }% of its original value.\nSolve for the original amount.`;
+            } else {
+              statement = `An item was marked up by ${a} with a markup percentage of ${ (p*100).toFixed(0) }%.\nSolve for the original price.`;
+            }
+          } else {
+            if (subtype === 'basic') {
+              statement = `A number decreased by ${a}, which is ${ (p*100).toFixed(0) }% of its original value.\nSolve for the original amount.`;
+            } else {
+              statement = `An item was discounted by ${a} with a discount percentage of ${ (p*100).toFixed(0) }%.\nSolve for the original price.`;
+            }
+          }
+        }
+        return {
+          type: 'percentChange',
+          direction,
+          subtype,
+          statement,
+          variables: { a, p, w, newAmount },
+          unknown
+        };
+      } else if (chosenType === 'error') {
+        unknown = chooseUnknown(['a', 'p', 'w']);
+        if (unknown === 'w') {
+          a = getRandomInt(1, 10);
+          p = getRandomInt(1, 10) / 100;
+          w = +(a / p).toFixed(2);
+          statement = `A measurement has an error of ${(p*100).toFixed(0)}%.\nThe error amount is ${a}.\nSolve for the actual amount (w).`;
+        } else if (unknown === 'p') {
+          w = getRandomInt(50, 200);
+          a = getRandomInt(1, 10);
+          p = +(a / w).toFixed(3);
+          statement = `A measurement error occurred.\nThe actual amount is ${w} and the error amount is ${a}.\nSolve for the error percentage (p) as a decimal.`;
+        } else {
+          w = getRandomInt(50, 200);
+          p = getRandomInt(1, 10) / 100;
+          a = +(w * p).toFixed(2);
+          statement = `A measurement has an error of ${(p*100).toFixed(0)}%.\nThe actual amount is ${w}.\nSolve for the error amount (a).`;
+        }
+        return { type: 'error', statement, variables: { a, p, w }, unknown };
+      } else if (chosenType === 'basic') {
+        unknown = chooseUnknown(['a', 'p', 'w']);
+        if (unknown === 'w') {
+          a = getRandomInt(5, 50);
+          p = getRandomInt(10, 90) / 100;
+          w = +(a / p).toFixed(2);
+          statement = `A part amount is ${a} which represents ${(p*100).toFixed(0)}% of the whole.\nSolve for the whole amount (w).`;
+        } else if (unknown === 'p') {
+          w = getRandomInt(50, 200);
+          a = getRandomInt(5, w - 1);
+          p = +(a / w).toFixed(3);
+          statement = `Given a whole amount of ${w} and a part of ${a},\nsolve for the percentage (p) as a decimal.`;
+        } else {
+          w = getRandomInt(50, 200);
+          p = getRandomInt(10, 90) / 100;
+          a = +(w * p).toFixed(2);
+          statement = `Given a whole amount of ${w} and a percentage of ${(p*100).toFixed(0)}%,\nsolve for the part amount (a).`;
+        }
+        return { type: 'basic', statement, variables: { a, p, w }, unknown };
+      }
+    }
+
+    // Simple Interest problem generator (unchanged except for formatting).
+    function generateSimpleInterestProblem() {
+      function SimpleChooseUnknown() {
+        return randomChoice(['I', 'P', 'r', 't']);
+      }
+      const SimpleUnknown = SimpleChooseUnknown();
+      if (SimpleUnknown === 'I') {
+        const P = getRandomInt(100, 1000);
+        const r = +(getRandomInt(1, 10) / 100).toFixed(3);
+        const t = getRandomInt(1, 10);
+        const I = +(P * r * t).toFixed(2);
+        const statement = `For a principal of $${P}, an interest rate of ${(r * 100).toFixed(0)}%,\nand a time period of ${t} years,\nsolve for the simple interest (I).`;
+        return { type: 'simpleInterest', statement, variables: { I, P, r, t }, SimpleUnknown: 'I' };
+      } else if (SimpleUnknown === 'P') {
+        const I = getRandomInt(100, 1000);
+        const r = +(getRandomInt(1, 10) / 100).toFixed(3);
+        const t = getRandomInt(1, 10);
+        const P = +(I / (r * t)).toFixed(2);
+        const statement = `For an interest of $${I}, an interest rate of ${(r * 100).toFixed(0)}%,\nand a time period of ${t} years,\nsolve for the principal (P).`;
+        return { type: 'simpleInterest', statement, variables: { I, P, r, t }, SimpleUnknown: 'P' };
+      } else if (SimpleUnknown === 'r') {
+        const I = getRandomInt(100, 1000);
+        const P = getRandomInt(100, 1000);
+        const t = getRandomInt(1, 10);
+        const r = +(I / (P * t)).toFixed(3);
+        const statement = `For an interest of $${I}, a principal of $${P},\nand a time period of ${t} years,\nsolve for the interest rate (r) as a decimal.`;
+        return { type: 'simpleInterest', statement, variables: { I, P, r, t }, SimpleUnknown: 'r' };
+      } else {
+        const I = getRandomInt(100, 1000);
+        const P = getRandomInt(100, 1000);
+        const r = +(getRandomInt(1, 10) / 100).toFixed(3);
+        const t = +(I / (P * r)).toFixed(2);
+        const statement = `For an interest of $${I}, a principal of $${P},\nand an interest rate of ${(r * 100).toFixed(0)}%,\nsolve for the time in years (t).`;
+        return { type: 'simpleInterest', statement, variables: { I, P, r, t }, SimpleUnknown: 't' };
+      }
+    }
+
+    // ========== Building the Equation Form ==========
+    function buildEquationForm(varOrder, mapping) {
+      const container = document.createElement('div');
+      container.id = "equationRow";
+      container.style.display = 'flex';
+      container.style.alignItems = 'center';
+      container.style.justifyContent = 'center';
+      container.style.gap = '15px';
+
+      if (varOrder.length === 4) {
+        // I = P × r × t
+        container.appendChild(createInputBlock('I', mapping['I']));
+        container.appendChild(createOperatorLabel("="));
+        container.appendChild(createInputBlock('P', mapping['P']));
+        container.appendChild(createOperatorLabel("×"));
+        container.appendChild(createInputBlock('r', mapping['r']));
+        container.appendChild(createOperatorLabel("×"));
+        container.appendChild(createInputBlock('t', mapping['t']));
+      } else if (varOrder.length === 3) {
+        // For problems with variables a, p, w.
+        container.appendChild(createInputBlock('a', mapping['a']));
+        container.appendChild(createOperatorLabel("="));
+        container.appendChild(createInputBlock('p', mapping['p']));
+        container.appendChild(createOperatorLabel("×"));
+        container.appendChild(createInputBlock('w', mapping['w']));
+      } else if (varOrder.length === 2) {
+        container.appendChild(createInputBlock(varOrder[0], mapping[varOrder[0]]));
+        container.appendChild(createOperatorLabel("="));
+        container.appendChild(createInputBlock(varOrder[1], mapping[varOrder[1]]));
+      }
+      return container;
+    }
+
+    // Helper to create an input block.
+    function createInputBlock(variable, hintText) {
+      const block = document.createElement('div');
+      block.className = "input-block";
+      const label = document.createElement('div');
+      label.textContent = variable;
+      label.style.fontWeight = 'bold';
+      block.appendChild(label);
+      const input = document.createElement('input');
+      input.type = 'number';
+      input.step = 'any';
+      input.id = 'input_' + variable;
+      input.value = '';
+      block.appendChild(input);
+      const hint = document.createElement('div');
+      hint.className = 'variable-hint';
+      hint.textContent = hintText;
+      block.appendChild(hint);
+      return block;
+    }
+
+    // Helper to create an operator label.
+    function createOperatorLabel(op) {
+      const label = document.createElement('span');
+      label.textContent = op;
+      label.style.fontWeight = 'bold';
+      label.style.minWidth = '20px';
+      label.style.textAlign = 'center';
+      return label;
+    }
+
+    // ========== Updating the UI ==========
+    function updateUI() {
+      document.getElementById('problemStatement').textContent = currentProblem.statement;
+      document.getElementById('feedback').textContent = '';
+      const equationContainer = document.getElementById('equationRow');
+      equationContainer.innerHTML = '';
+
+      let varOrder, mapping;
+      if (currentProblem.type === 'simpleInterest') {
+        varOrder = ['I','P','r','t'];
+        mapping = simpleMapping;
+      } else if (currentProblem.type === 'percentChange') {
+        varOrder = ['a','p','w'];
+        mapping = getPercentChangeMapping(currentProblem);
+      } else if (currentProblem.type === 'markup') {
+        // For markup, unknown is 'a'; p and w are given.
+        varOrder = ['a','p','w'];
+        // p's hint: show [100 + markup] as a decimal.
+        // Compute markup% from p: markup = (p - 1)*100.
+        let markupPercent = ((currentProblem.variables.p - 1) * 100).toFixed(0);
+        mapping = {
+          a: "selling price",
+          p: `[100 + markup] as a decimal`,
+          w: "original price"
+        };
+      } else if (currentProblem.type === 'discount') {
+        // For discount, unknown is 'a'; p and w are given.
+        varOrder = ['a','p','w'];
+        // Compute discount% from p: discount = (1 - p)*100.
+        let discountPercent = ((1 - currentProblem.variables.p) * 100).toFixed(0);
+        mapping = {
+          a: "selling price",
+          p: `[100 - discount] as a decimal`,
+          w: "original price"
+        };
+      } else {
+        varOrder = ['a','p','w'];
+        mapping = nonSimpleMapping[currentProblem.type];
+      }
+      const formRow = buildEquationForm(varOrder, mapping);
+      equationContainer.appendChild(formRow);
+
+      // Reset buttons.
+      const calcBtn = document.getElementById('calculateBtn');
+      calcBtn.textContent = "Calculate";
+      calcBtn.disabled = false;
+      document.getElementById('nextBtn').classList.add('hidden');
+    }
+
+    function clearEquationInputs() {
+      const inputs = document.querySelectorAll('#equationRow input');
+      inputs.forEach(input => input.value = '');
+    }
+
+    // ========== Problem Generator ==========
+    function generateNewProblem() {
+      // 30% chance for simple interest; otherwise non-simple.
+      if (Math.random() < 0.3) {
+        currentProblem = generateSimpleInterestProblem();
+      } else {
+        currentProblem = generateNonSimpleProblem();
+      }
+      updateUI();
+    }
+
+    // ========== Answer Checking ==========
+    function checkAnswer() {
+      // Special handling for markup and discount problems:
+      if (currentProblem.type === 'markup' || currentProblem.type === 'discount') {
+        let allCorrect = true;
+        let blankCount = 0;
+        // For these types, the unknown is always 'a'.
+        const aInput = document.getElementById('input_a');
+        const pInput = document.getElementById('input_p');
+        const wInput = document.getElementById('input_w');
+        // Check that a is blank.
+        if (aInput.value.trim() !== '') {
+          allCorrect = false;
+        } else {
+          blankCount++;
+        }
+        // Check that p and w are correct.
+        [['p', currentProblem.variables.p], ['w', currentProblem.variables.w]].forEach(function(item) {
+          const [variable, correctValue] = item;
+          const inputElement = document.getElementById('input_' + variable);
+          const userEntry = inputElement.value.trim();
+          if (userEntry === '') {
+            allCorrect = false;
+          } else {
+            const userValue = parseFloat(userEntry);
+            if (isNaN(userValue) || Math.abs(userValue - correctValue) >= TOLERANCE) {
+              allCorrect = false;
+            }
+          }
+        });
+        // Expect exactly one blank (for a).
+        if (!allCorrect) {
+          let errorMsg = "Incorrect. The correct entries are: ";
+          errorMsg += `For a: leave blank. `;
+          errorMsg += `For p: ${currentProblem.variables.p} (this represents [100 ${currentProblem.type === 'markup' ? '+' : '-'} markup] as a decimal). `;
+          errorMsg += `For w: ${currentProblem.variables.w}.`;
+          document.getElementById('feedback').textContent = errorMsg;
+          clearEquationInputs();
+          const calcBtn = document.getElementById('calculateBtn');
+          calcBtn.textContent = "Next Problem";
+          calcBtn.disabled = false;
+          totalQuestions++;
+          updateScoreBoard();
+          return;
+        }
+        // If correct, reveal the computed answer.
+        const computed = currentProblem.variables.a;
+        let correctMsg = `The correct selling price is ${computed}.`;
+        totalQuestions++;
+        score++;
+        document.getElementById('feedback').textContent =
+          `Correct! Your setup is right. ${correctMsg}`;
+        updateScoreBoard();
+        document.getElementById('calculateBtn').disabled = true;
+        document.getElementById('nextBtn').classList.remove('hidden');
+
+        if (score >= SCORE_LIMIT) {
+          alert(`Game over! You reached a score of ${score} out of ${totalQuestions} questions.`);
+          disableAllButtons();
+        }
+        return;
+      }
+
+      // Existing answer checking for other problem types.
+      let varKeys;
+      if (currentProblem.type === 'simpleInterest') {
+        varKeys = ['I','P','r','t'];
+      } else if (currentProblem.type === 'markup' || currentProblem.type === 'discount') {
+        varKeys = ['a','p','w'];
+      } else {
+        varKeys = ['a','p','w'];
+      }
+      let emptyCount = 0;
+      let blankVariable = null;
+      let allCorrect = true;
+
+      varKeys.forEach(variable => {
+        const inputElement = document.getElementById('input_' + variable);
+        const userEntry = inputElement.value.trim();
+        if (userEntry === '') {
+          emptyCount++;
+          blankVariable = variable;
+        } else {
+          const userValue = parseFloat(userEntry);
+          let correctValue = currentProblem.variables[variable];
+          if (isNaN(userValue) || Math.abs(userValue - correctValue) >= TOLERANCE) {
+            allCorrect = false;
+          }
+        }
+      });
+
+      if (emptyCount !== 1 || !allCorrect) {
+        let errorMsg = "Incorrect. The correct entries are: ";
+        varKeys.forEach(variable => {
+          if(variable === currentProblem.unknown){
+            errorMsg += `For ${variable}: leave blank. `;
+          } else {
+            let correctVal = currentProblem.variables[variable];
+            if(variable === 'p'){
+              errorMsg += `For ${variable}: ${correctVal.toFixed(3)} (decimal) or ${(correctVal * 100).toFixed(1)}%. `;
+            } else {
+              errorMsg += `For ${variable}: ${correctVal}. `;
+            }
+          }
+        });
+        document.getElementById('feedback').textContent = errorMsg;
+        clearEquationInputs();
+        const calcBtn = document.getElementById('calculateBtn');
+        calcBtn.textContent = "Next Problem";
+        calcBtn.disabled = false;
+        totalQuestions++;
+        updateScoreBoard();
+        return;
+      }
+
+      let computed;
+      if (currentProblem.type === 'simpleInterest') {
+        if (blankVariable === 'I') {
+          computed = currentProblem.variables.P * currentProblem.variables.r * currentProblem.variables.t;
+        } else if (blankVariable === 'P') {
+          computed = currentProblem.variables.I / (currentProblem.variables.r * currentProblem.variables.t);
+        } else if (blankVariable === 'r') {
+          computed = currentProblem.variables.I / (currentProblem.variables.P * currentProblem.variables.t);
+        } else {
+          computed = currentProblem.variables.I / (currentProblem.variables.P * currentProblem.variables.r);
+        }
+        computed = +computed.toFixed(3);
+        var correctMsg = "";
+        if (currentProblem.SimpleUnknown === 'p' || currentProblem.SimpleUnknown === 'r') {
+          correctMsg = `The correct value is ${computed.toFixed(3)} (decimal) or ${(computed * 100).toFixed(1)}%.`;
+        } else {
+          correctMsg = `The correct value is ${computed}.`;
+        }
+      } else if (currentProblem.type === 'percentChange') {
+        if (blankVariable === 'a') {
+          computed = currentProblem.variables.w * currentProblem.variables.p;
+          computed = +computed.toFixed(3);
+          if (currentProblem.direction === 'increase') {
+            correctMsg = currentProblem.subtype === 'basic'
+              ? `The amount of increase is ${computed}.`
+              : `The amount of markup is $${computed}.`;
+          } else {
+            correctMsg = currentProblem.subtype === 'basic'
+              ? `The amount of decrease is ${computed}.`
+              : `The amount of discount is $${computed}.`;
+          }
+        } else if (blankVariable === 'p') {
+          computed = currentProblem.variables.a / currentProblem.variables.w;
+          computed = +computed.toFixed(3);
+          if (currentProblem.direction === 'increase') {
+            correctMsg = currentProblem.subtype === 'basic'
+              ? `The percent of increase is ${computed.toFixed(3)} (decimal) or ${(computed * 100).toFixed(1)}%.`
+              : `The markup percentage is ${computed.toFixed(3)} (decimal) or ${(computed * 100).toFixed(1)}%.`;
+          } else {
+            correctMsg = currentProblem.subtype === 'basic'
+              ? `The percent of decrease is ${computed.toFixed(3)} (decimal) or ${(computed * 100).toFixed(1)}%.`
+              : `The discount percentage is ${computed.toFixed(3)} (decimal) or ${(computed * 100).toFixed(1)}%.`;
+          }
+        } else if (blankVariable === 'w') {
+          computed = currentProblem.variables.a / currentProblem.variables.p;
+          computed = +computed.toFixed(3);
+          const newAmount = currentProblem.direction === 'increase'
+            ? +(computed + currentProblem.variables.a).toFixed(3)
+            : +(computed - currentProblem.variables.a).toFixed(3);
+          if (currentProblem.direction === 'increase') {
+            correctMsg = currentProblem.subtype === 'basic'
+              ? `The original amount was ${computed}, and the new amount is ${newAmount}.`
+              : `The original price was $${computed}, and the new price is now $${newAmount}.`;
+          } else {
+            correctMsg = currentProblem.subtype === 'basic'
+              ? `The original amount was ${computed}, and the new amount is ${newAmount}.`
+              : `The original price was $${computed}, and the selling price is now $${newAmount}.`;
+          }
+        }
+      } else {
+        if (blankVariable === 'a') {
+          computed = currentProblem.variables.w * currentProblem.variables.p;
+        } else if (blankVariable === 'p') {
+          computed = currentProblem.variables.a / currentProblem.variables.w;
+        } else if (blankVariable === 'w') {
+          computed = currentProblem.variables.a / currentProblem.variables.p;
+        }
+        computed = +computed.toFixed(3);
+        var correctMsg = (blankVariable === 'p')
+          ? `The correct value is ${computed.toFixed(3)} (decimal) or ${(computed * 100).toFixed(1)}%.`
+          : `The correct value is ${computed}.`;
+      }
+
+      totalQuestions++;
+      score++;
+      document.getElementById('feedback').textContent =
+        `Correct! Your setup is right. ${correctMsg}`;
+      updateScoreBoard();
+      document.getElementById('calculateBtn').disabled = true;
+      document.getElementById('nextBtn').classList.remove('hidden');
+
+      if (score >= SCORE_LIMIT) {
+        alert(`Game over! You reached a score of ${score} out of ${totalQuestions} questions.`);
+        disableAllButtons();
+      }
+    }
+
+    function updateScoreBoard() {
+      document.getElementById('scoreBoard').textContent = `Score: ${score} out of ${totalQuestions}`;
+    }
+
+    function disableAllButtons() {
+      document.getElementById('calculateBtn').disabled = true;
+      document.getElementById('nextBtn').disabled = true;
+      document.getElementById('quitBtn').disabled = true;
+    }
+
+    function quitGame() {
+      alert(`Game over. You answered ${score} out of ${totalQuestions} correctly.`);
+      disableAllButtons();
+    }
+
+    // ========== Event Listeners ==========
+    document.getElementById('calculateBtn').addEventListener('click', function() {
+      if (this.textContent === "Next Problem") {
+        generateNewProblem();
+      } else {
+        checkAnswer();
+      }
+    });
+    document.getElementById('nextBtn').addEventListener('click', generateNewProblem);
+    document.getElementById('quitBtn').addEventListener('click', quitGame);
+
+    window.onload = generateNewProblem;
+  </script>
+</body>
+</html>
